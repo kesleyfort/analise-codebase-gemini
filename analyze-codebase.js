@@ -21,7 +21,8 @@ const CONFIG = {
   MAX_INPUT_TOKENS: 800000, // Conservative limit for input tokens
   RETRY_ATTEMPTS: 3, // Number of retry attempts for failed batches
   RETRY_DELAY_MS: 1000, // Initial retry delay in milliseconds
-  RETRY_BACKOFF: 2 // Exponential backoff multiplier
+  RETRY_BACKOFF: 2, // Exponential backoff multiplier
+  PARALLEL_BATCHES: 3 // Number of batches to process in parallel
 };
 
 // Initialize Gemini client
@@ -197,6 +198,80 @@ async function analyzeBatchWithRetry(
   }
   
   throw lastError;
+}
+
+/**
+ * Process multiple batches in parallel with controlled concurrency
+ * Returns both successful results and any errors that occurred
+ */
+async function processBatchesInParallel(
+  batches,
+  promptTemplate,
+  projectName,
+  analysisDate,
+  concurrency
+) {
+  const results = [];
+  const errors = [];
+  
+  // Process batches in waves/chunks
+  for (let i = 0; i < batches.length; i += concurrency) {
+    const chunk = batches.slice(i, Math.min(i + concurrency, batches.length));
+    const chunkStart = i + 1;
+    const chunkEnd = Math.min(i + concurrency, batches.length);
+    
+    console.log(`\nProcessing batches ${chunkStart}-${chunkEnd} in parallel...`);
+    
+    // Create promises for each batch in this chunk
+    const chunkPromises = chunk.map((batch, chunkIndex) => {
+      const batchNumber = i + chunkIndex + 1;
+      return analyzeBatchWithRetry(
+        batch,
+        promptTemplate,
+        projectName,
+        batchNumber,
+        batches.length,
+        analysisDate
+      )
+        .then(result => ({ success: true, batchNumber, result }))
+        .catch(error => ({ success: false, batchNumber, error, batch }));
+    });
+    
+    // Wait for all batches in this chunk to complete
+    const chunkResults = await Promise.allSettled(chunkPromises);
+    
+    // Process results from this chunk
+    chunkResults.forEach((settledResult, chunkIndex) => {
+      const batchNumber = i + chunkIndex + 1;
+      
+      if (settledResult.status === 'fulfilled') {
+        const result = settledResult.value;
+        
+        if (result.success) {
+          results.push(result.result);
+          console.log(`   ✓ Batch ${batchNumber}/${batches.length} complete`);
+        } else {
+          errors.push({
+            batchNumber: result.batchNumber,
+            error: result.error,
+            files: result.batch.map(f => f.name)
+          });
+          console.error(`   ✗ Batch ${result.batchNumber}/${batches.length} failed: ${result.error.message}`);
+          console.error(`      Files: ${result.batch.map(f => f.name).join(', ')}`);
+        }
+      } else {
+        // This shouldn't happen with Promise.allSettled, but handle just in case
+        errors.push({
+          batchNumber,
+          error: new Error('Unexpected promise rejection'),
+          files: chunk[chunkIndex].map(f => f.name)
+        });
+        console.error(`   ✗ Batch ${batchNumber}/${batches.length} failed unexpectedly`);
+      }
+    });
+  }
+  
+  return { results, errors };
 }
 
 /**
@@ -446,40 +521,38 @@ Preparing to analyze ${files.length} files...`);
   const batches = createBatches(fileContents, CONFIG.BATCH_SIZE);
   console.log(`Split into ${batches.length} batch(es) for analysis`);
 
-  // Analyze each batch
-  const batchResults = [];
+  // Analyze batches in parallel with controlled concurrency
+  console.log(`\nUsing parallel processing (${CONFIG.PARALLEL_BATCHES} batches at a time)...`);
+
+  const { results: batchResults, errors: batchErrors } = await processBatchesInParallel(
+    batches,
+    promptTemplate,
+    projectName,
+    analysisDate,
+    CONFIG.PARALLEL_BATCHES
+  );
+
+  // Accumulate token usage from all successful batches
   let totalTokens = {
     prompt_tokens: 0,
     completion_tokens: 0,
     total_tokens: 0
   };
 
-  for (let i = 0; i < batches.length; i++) {
-    try {
-      const batchResult = await analyzeBatchWithRetry(
-        batches[i],
-        promptTemplate,
-        projectName,
-        i + 1,
-        batches.length,
-        analysisDate
-      );
-      
-      batchResults.push(batchResult);
-      
-      // Accumulate token usage
-      if (batchResult.token_usage) {
-        totalTokens.prompt_tokens += batchResult.token_usage.prompt_tokens;
-        totalTokens.completion_tokens += batchResult.token_usage.completion_tokens;
-        totalTokens.total_tokens += batchResult.token_usage.total_tokens;
-      }
-      
-      console.log(`✓ Batch ${i + 1}/${batches.length} complete`);
-    } catch (error) {
-      console.error(`✗ Batch ${i + 1}/${batches.length} failed after ${CONFIG.RETRY_ATTEMPTS} retries:`, error.message);
-      console.error(`   Files in failed batch: ${batches[i].map(f => f.name).join(', ')}`);
-      // Continue with other batches
+  batchResults.forEach(batchResult => {
+    if (batchResult.token_usage) {
+      totalTokens.prompt_tokens += batchResult.token_usage.prompt_tokens;
+      totalTokens.completion_tokens += batchResult.token_usage.completion_tokens;
+      totalTokens.total_tokens += batchResult.token_usage.total_tokens;
     }
+  });
+
+  // Report errors if any occurred
+  if (batchErrors.length > 0) {
+    console.error(`\n⚠️  ${batchErrors.length} batch(es) failed after ${CONFIG.RETRY_ATTEMPTS} retries`);
+    batchErrors.forEach(error => {
+      console.error(`   Batch ${error.batchNumber}: ${error.error.message}`);
+    });
   }
 
   if (batchResults.length === 0) {
@@ -497,9 +570,9 @@ Preparing to analyze ${files.length} files...`);
   const costs = calculateCost(totalTokens, CONFIG.MODEL);
   aggregatedResults.estimated_cost = {
     model: costs.model,
-    input_cost_usd: costs.input_cost,
-    output_cost_usd: costs.output_cost,
-    total_cost_usd: costs.total_cost,
+    input_cost_usd: costs.input_cost_usd,
+    output_cost_usd: costs.output_cost_usd,
+    total_cost_usd: costs.total_cost_usd,
     currency: 'USD'
   };
 
@@ -763,11 +836,11 @@ function calculateCost(tokenUsage, modelName) {
   const inputCost = (tokenUsage.prompt_tokens / 1000000) * inputRate;
   const outputCost = (tokenUsage.completion_tokens / 1000000) * outputRate;
   const totalCost = inputCost + outputCost;
-  
+
   return {
-    input_cost: inputCost,
-    output_cost: outputCost,
-    total_cost: totalCost,
+    input_cost_usd: inputCost,
+    output_cost_usd: outputCost,
+    total_cost_usd: totalCost,
     model: modelName
   };
 }
@@ -854,7 +927,7 @@ async function main() {
     console.log('\nAnalysis complete!');
 
   } catch (error) {
-    console.error('\n❌ Error:', error.message);
+    console.error('\n Error:', error.message);
     process.exit(1);
   }
 }
