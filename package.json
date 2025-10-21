@@ -1,0 +1,27 @@
+{
+  "name": "ecommerce-code-analyzer",
+  "version": "1.0.0",
+  "description": "Code analysis tool for e-commerce automation projects using Google Gemini API",
+  "main": "analyze-codebase.js",
+  "scripts": {
+    "analyze": "node analyze-codebase.js",
+    "analyze:dir": "node analyze-codebase.js"
+  },
+  "keywords": [
+    "code-analysis",
+    "ecommerce",
+    "automation",
+    "testing",
+    "gemini",
+    "google-ai",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
