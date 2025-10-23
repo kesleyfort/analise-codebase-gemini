@@ -119,7 +119,7 @@ async function readFileContent(filePath) {
  * Carrega o template de prompt para análise de código
  * 
  * Esta função busca e carrega o arquivo Markdown contendo o prompt detalhado que será
- * enviado ao Gemini API. O arquivo deve estar localizado no diretório pai do script
+ * enviado ao Gemini API. O arquivo deve estar localizado no diretório do script
  * com o nome 'Prompt-Analise-Codigo-Ecommerce.md'. Este template contém todos os
  * critérios de avaliação e instruções para a análise de código.
  * 
@@ -135,7 +135,7 @@ async function readFileContent(filePath) {
 ..."
  */
 async function loadPromptTemplate() {
-  const promptPath = path.join(__dirname, '..', 'Prompt-Analise-Codigo-Ecommerce.md');
+  const promptPath = path.join(__dirname, 'Prompt-Analise-Codigo-Ecommerce.md');
   try {
     return await fs.readFile(promptPath, 'utf-8');
   } catch (error) {
@@ -477,6 +477,12 @@ Analyzing batch ${batchNumber}/${totalBatches} (${fileContents.length} files)...
 
 ---
 
+## IDIOMA OBRIGATÓRIO
+
+IMPORTANTE: Toda a análise DEVE ser escrita em PORTUGUÊS BRASILEIRO. Todos os títulos, descrições, observações, problemas, recomendações e qualquer texto no JSON devem estar EXCLUSIVAMENTE em português do Brasil. NÃO use inglês em nenhuma parte da resposta.
+
+---
+
 ## FORMATO DE SAÍDA OBRIGATÓRIO
 
 Você DEVE retornar sua análise em formato JSON válido seguindo EXATAMENTE esta estrutura:
@@ -555,13 +561,14 @@ Você DEVE retornar sua análise em formato JSON válido seguindo EXATAMENTE est
 \`\`\`
 
 ## INSTRUÇÕES CRÍTICAS:
-1. Retorne APENAS o JSON, sem texto adicional antes ou depois
-2. Calcule as notas de 1 a 10 para cada categoria
-3. Calcule a média ponderada final usando os pesos especificados
-4. Identifique pelo menos 5-10 problemas comuns
-5. Liste os 10 problemas mais críticos no top_issues
-6. Forneça pelo menos 7 recomendações priorizadas
-7. CRÍTICO - O JSON deve ser VÁLIDO e bem-formado:
+1. ESCREVA TODA A ANÁLISE EM PORTUGUÊS BRASILEIRO - todos os títulos, descrições, observações, problemas e recomendações devem estar em português
+2. Retorne APENAS o JSON, sem texto adicional antes ou depois
+3. Calcule as notas de 1 a 10 para cada categoria
+4. Calcule a média ponderada final usando os pesos especificados
+5. Identifique pelo menos 5-10 problemas comuns
+6. Liste os 10 problemas mais críticos no top_issues
+7. Forneça pelo menos 7 recomendações priorizadas
+8. CRÍTICO - O JSON deve ser VÁLIDO e bem-formado:
    - Todas as strings devem usar aspas duplas
    - Não inclua vírgulas após o último elemento de arrays/objetos
    - Escape caracteres especiais em strings (\n, \t, \", \\)
