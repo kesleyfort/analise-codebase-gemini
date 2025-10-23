@@ -1,16 +1,26 @@
 #!/usr/bin/env node
 
 /**
- * Code Analysis Script using Google Gemini API
- * Analyzes Java codebase for e-commerce automation projects
- * Outputs JSON with grades for 5 main categories
+ * @fileoverview Script de Análise de Código usando Google Gemini API
+ * 
+ * Este script analisa bases de código Java de projetos de automação de testes,
+ * gerando um relatório JSON completo com notas e recomendações em 5 categorias principais:
+ * - Arquitetura (25%)
+ * - Qualidade de Código (30%)
+ * - Validações (25%)
+ * - Tratamento de Erros (20%)
+ * 
+ * O processamento é feito em lotes paralelos para otimizar o uso da API do Gemini,
+ * com retry automático e controle de custos/tokens.
+ * 
+ * @author Sistema de Análise de Código
+ * @version 1.0.0
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs').promises;
 const path = require('path');
 
-// Configuration
 const CONFIG = {
   MODEL: 'gemini-2.5-flash',
   MAX_TOKENS: 100000,
@@ -25,7 +35,6 @@ const CONFIG = {
   PARALLEL_BATCHES: 3 // Number of batches to process in parallel
 };
 
-// Initialize Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({
   model: CONFIG.MODEL,
@@ -38,7 +47,22 @@ const model = genAI.getGenerativeModel({
 });
 
 /**
- * Recursively scan directory for Java files
+ * Varre recursivamente um diretório em busca de arquivos Java
+ * 
+ * Esta função percorre toda a árvore de diretórios a partir de um caminho inicial,
+ * identificando e coletando todos os arquivos com extensões suportadas (definidas em CONFIG).
+ * Automaticamente ignora diretórios comuns que não contêm código-fonte como node_modules,
+ * .git, target, build e dist.
+ * 
+ * @async
+ * @param {string} dir - Caminho do diretório a ser escaneado
+ * @param {Array<string>} [fileList=[]] - Array acumulador para os caminhos dos arquivos encontrados
+ * @returns {Promise<Array<string>>} Promise que resolve para array com os caminhos completos de todos os arquivos Java encontrados
+ * @throws {Error} Lança erro se não conseguir ler o diretório ou verificar status dos arquivos
+ * 
+ * @example
+ * const javaFiles = await scanDirectory('/projeto/src');
+ * // Retorna: ['/projeto/src/Main.java', '/projeto/src/util/Helper.java', ...]
  */
 async function scanDirectory(dir, fileList = []) {
   const files = await fs.readdir(dir);
@@ -48,7 +72,6 @@ async function scanDirectory(dir, fileList = []) {
     const stat = await fs.stat(filePath);
 
     if (stat.isDirectory()) {
-      // Skip common non-source directories
       if (!['node_modules', '.git', 'target', 'build', 'dist'].includes(file)) {
         await scanDirectory(filePath, fileList);
       }
@@ -64,7 +87,20 @@ async function scanDirectory(dir, fileList = []) {
 }
 
 /**
- * Read file content with size limit
+ * Lê o conteúdo de um arquivo com limite de tamanho
+ * 
+ * Esta função lê o conteúdo de um arquivo em UTF-8 e, caso o arquivo exceda o tamanho
+ * máximo configurado (CONFIG.MAX_FILE_SIZE), trunca o conteúdo e adiciona uma mensagem
+ * indicando que o arquivo foi cortado. Isso evita problemas de memória e custos excessivos
+ * ao processar arquivos muito grandes.
+ * 
+ * @async
+ * @param {string} filePath - Caminho completo do arquivo a ser lido
+ * @returns {Promise<string|null>} Promise que resolve para o conteúdo do arquivo (possivelmente truncado) ou null em caso de erro
+ * 
+ * @example
+ * const content = await readFileContent('/projeto/Main.java');
+ * // Retorna: "public class Main { ... }" ou null se houver erro
  */
 async function readFileContent(filePath) {
   try {
@@ -80,7 +116,23 @@ async function readFileContent(filePath) {
 }
 
 /**
- * Load the analysis prompt template
+ * Carrega o template de prompt para análise de código
+ * 
+ * Esta função busca e carrega o arquivo Markdown contendo o prompt detalhado que será
+ * enviado ao Gemini API. O arquivo deve estar localizado no diretório pai do script
+ * com o nome 'Prompt-Analise-Codigo-Ecommerce.md'. Este template contém todos os
+ * critérios de avaliação e instruções para a análise de código.
+ * 
+ * @async
+ * @returns {Promise<string>} Promise que resolve para o conteúdo completo do template de prompt em formato Markdown
+ * @throws {Error} Lança erro se o arquivo de template não for encontrado ou não puder ser lido
+ * 
+ * @example
+ * const promptTemplate = await loadPromptTemplate();
+ * // Retorna: "# Critérios de Análise
+
+## Arquitetura
+..."
  */
 async function loadPromptTemplate() {
   const promptPath = path.join(__dirname, '..', 'Prompt-Analise-Codigo-Ecommerce.md');
@@ -93,15 +145,42 @@ async function loadPromptTemplate() {
 }
 
 /**
- * Estimate token count from text (rough approximation)
+ * Estima a contagem de tokens a partir de um texto
+ * 
+ * Fornece uma aproximação rápida do número de tokens que um texto consumirá na API do Gemini.
+ * Utiliza a heurística de ~4 caracteres por token, que é uma média razoável para texto em
+ * português e código. Esta estimativa é usada para criar lotes que não excedam os limites
+ * de tokens da API.
+ * 
+ * @param {string} text - Texto para o qual estimar a contagem de tokens
+ * @returns {number} Número estimado de tokens (arredondado para cima)
+ * 
+ * @example
+ * const tokens = estimateTokens('public class Main { }');
+ * // Retorna: 6 (aproximadamente 23 caracteres / 4)
  */
 function estimateTokens(text) {
-  // Rough estimation: ~4 characters per token
   return Math.ceil(text.length / 4);
 }
 
 /**
- * Create batches of files with token awareness
+ * Cria lotes de arquivos com consciência de tokens
+ * 
+ * Agrupa arquivos em lotes (batches) respeitando dois limites importantes:
+ * 1. Número máximo de arquivos por lote (batchSize)
+ * 2. Número máximo estimado de tokens por lote (CONFIG.MAX_INPUT_TOKENS)
+ * 
+ * Esta função garante que nenhum lote exceda os limites da API do Gemini, evitando
+ * erros de processamento e otimizando o uso de recursos. Os arquivos são agrupados
+ * sequencialmente, iniciando um novo lote quando qualquer um dos limites seria excedido.
+ * 
+ * @param {Array<{path: string, name: string, content: string}>} fileContents - Array de objetos contendo informações dos arquivos
+ * @param {number} batchSize - Número máximo de arquivos permitidos por lote
+ * @returns {Array<Array<{path: string, name: string, content: string}>>} Array de lotes, onde cada lote é um array de arquivos
+ * 
+ * @example
+ * const batches = createBatches(fileContents, 15);
+ * // Retorna: [[file1, file2, ...], [file16, file17, ...]]
  */
 function createBatches(fileContents, batchSize) {
   const batches = [];
@@ -111,7 +190,6 @@ function createBatches(fileContents, batchSize) {
   for (const file of fileContents) {
     const fileTokens = estimateTokens(file.content);
     
-    // If adding this file would exceed limits or batch size, start new batch
     if (currentBatch.length >= batchSize || 
         (currentTokenEstimate + fileTokens > CONFIG.MAX_INPUT_TOKENS && currentBatch.length > 0)) {
       batches.push(currentBatch);
@@ -123,7 +201,6 @@ function createBatches(fileContents, batchSize) {
     currentTokenEstimate += fileTokens;
   }
   
-  // Add remaining files
   if (currentBatch.length > 0) {
     batches.push(currentBatch);
   }
@@ -132,26 +209,45 @@ function createBatches(fileContents, batchSize) {
 }
 
 /**
- * Sleep for specified milliseconds
+ * Pausa a execução por um período especificado
+ * 
+ * Função auxiliar que cria uma Promise que resolve após o tempo especificado,
+ * permitindo pausas assíncronas no fluxo de execução. Utilizada principalmente
+ * na lógica de retry com backoff exponencial.
+ * 
+ * @param {number} ms - Tempo de espera em milissegundos
+ * @returns {Promise<void>} Promise que resolve após o tempo especificado
+ * 
+ * @example
+ * await sleep(1000); // Pausa por 1 segundo
  */
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
- * Attempt to repair common JSON errors
+ * Tenta reparar erros comuns em JSON malformado
+ * 
+ * Esta função implementa várias estratégias de correção automática para JSON que pode
+ * vir com erros comuns da API do Gemini, incluindo:
+ * - Remove vírgulas trailing antes de chaves/colchetes de fechamento
+ * - Corrige problemas de escape em strings (
+, 	)
+ * - Extrai apenas o conteúdo JSON válido (do primeiro { ao último })
+ * - Remove texto adicional antes ou depois do JSON
+ * 
+ * @param {string} jsonText - String contendo JSON potencialmente malformado
+ * @returns {string} String JSON reparada e pronta para parsing
+ * 
+ * @example
+ * const fixed = attemptJsonRepair('{"key": "value",}');
+ * // Retorna: '{"key": "value"}'
  */
 function attemptJsonRepair(jsonText) {
   let repaired = jsonText;
   
-  // Remove trailing commas before closing braces/brackets
-  repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
+  repaired = repaired.replace(/([^\\])\t/g, '$1\\t');
   
-  // Fix common escape issues in strings
-  repaired = repaired.replace(/([^\\])\\n/g, '$1\\\\n');
-  repaired = repaired.replace(/([^\\])\\t/g, '$1\\\\t');
-  
-  // Remove any text before first { and after last }
   const firstBrace = repaired.indexOf('{');
   const lastBrace = repaired.lastIndexOf('}');
   if (firstBrace >= 0 && lastBrace > firstBrace) {
@@ -162,7 +258,29 @@ function attemptJsonRepair(jsonText) {
 }
 
 /**
- * Analyze batch with exponential backoff retry logic
+ * Analisa um lote com lógica de retry e backoff exponencial
+ * 
+ * Encapsula a função analyzeBatch com mecanismo robusto de tentativas automáticas (retry)
+ * em caso de falha. Implementa backoff exponencial, onde cada tentativa subsequente aguarda
+ * progressivamente mais tempo antes de tentar novamente. Isso ajuda a lidar com:
+ * - Problemas temporários de rede
+ * - Rate limiting da API
+ * - Erros transitórios do serviço
+ * 
+ * O número de tentativas e o delay inicial são configuráveis via CONFIG.
+ * 
+ * @async
+ * @param {Array<{path: string, name: string, content: string}>} fileContents - Array de arquivos a serem analisados neste lote
+ * @param {string} promptTemplate - Template do prompt de análise carregado
+ * @param {string} projectName - Nome do projeto sendo analisado
+ * @param {number} batchNumber - Número identificador deste lote (para logging)
+ * @param {number} totalBatches - Número total de lotes no processamento completo
+ * @param {string} analysisDate - Data da análise no formato ISO
+ * @returns {Promise<Object>} Promise que resolve para o resultado da análise do lote
+ * @throws {Error} Lança o último erro capturado se todas as tentativas falharem
+ * 
+ * @example
+ * const result = await analyzeBatchWithRetry(files, prompt, 'meu-projeto', 1, 5, '2025-01-23');
  */
 async function analyzeBatchWithRetry(
   fileContents, 
@@ -189,10 +307,10 @@ async function analyzeBatchWithRetry(
       
       if (attempt < CONFIG.RETRY_ATTEMPTS) {
         const delay = CONFIG.RETRY_DELAY_MS * Math.pow(CONFIG.RETRY_BACKOFF, attempt - 1);
-        console.warn(`   ⚠️  Retry ${attempt}/${CONFIG.RETRY_ATTEMPTS - 1} after ${delay}ms...`);
+        console.warn(`   Retry ${attempt}/${CONFIG.RETRY_ATTEMPTS - 1} after ${delay}ms...`);
         await sleep(delay);
       } else {
-        console.error(`   ✗ All ${CONFIG.RETRY_ATTEMPTS} attempts failed`);
+        console.error(`    All ${CONFIG.RETRY_ATTEMPTS} attempts failed`);
       }
     }
   }
@@ -201,8 +319,27 @@ async function analyzeBatchWithRetry(
 }
 
 /**
- * Process multiple batches in parallel with controlled concurrency
- * Returns both successful results and any errors that occurred
+ * Processa múltiplos lotes em paralelo com controle de concorrência
+ * 
+ * Gerencia o processamento paralelo de lotes de análise, respeitando um limite de
+ * concorrência para evitar sobrecarga da API e do sistema. Os lotes são processados
+ * em "ondas" (chunks), onde cada onda contém até N lotes executando simultaneamente.
+ * 
+ * A função utiliza Promise.allSettled para garantir que a falha de um lote não
+ * interrompa o processamento dos demais. Retorna tanto os resultados bem-sucedidos
+ * quanto os erros para permitir processamento parcial.
+ * 
+ * @async
+ * @param {Array<Array<Object>>} batches - Array contendo todos os lotes a serem processados
+ * @param {string} promptTemplate - Template do prompt de análise
+ * @param {string} projectName - Nome do projeto
+ * @param {string} analysisDate - Data da análise
+ * @param {number} concurrency - Número máximo de lotes a processar simultaneamente
+ * @returns {Promise<{results: Array<Object>, errors: Array<{batchNumber: number, error: Error, files: Array<string>}>}>} Objeto contendo arrays de resultados e erros
+ * 
+ * @example
+ * const { results, errors } = await processBatchesInParallel(batches, prompt, 'projeto', '2025-01-23', 3);
+ * // Processa 3 lotes por vez
  */
 async function processBatchesInParallel(
   batches,
@@ -214,15 +351,14 @@ async function processBatchesInParallel(
   const results = [];
   const errors = [];
   
-  // Process batches in waves/chunks
   for (let i = 0; i < batches.length; i += concurrency) {
     const chunk = batches.slice(i, Math.min(i + concurrency, batches.length));
     const chunkStart = i + 1;
     const chunkEnd = Math.min(i + concurrency, batches.length);
     
-    console.log(`\nProcessing batches ${chunkStart}-${chunkEnd} in parallel...`);
+    console.log(`
+Processing batches ${chunkStart}-${chunkEnd} in parallel...`);
     
-    // Create promises for each batch in this chunk
     const chunkPromises = chunk.map((batch, chunkIndex) => {
       const batchNumber = i + chunkIndex + 1;
       return analyzeBatchWithRetry(
@@ -237,10 +373,8 @@ async function processBatchesInParallel(
         .catch(error => ({ success: false, batchNumber, error, batch }));
     });
     
-    // Wait for all batches in this chunk to complete
     const chunkResults = await Promise.allSettled(chunkPromises);
     
-    // Process results from this chunk
     chunkResults.forEach((settledResult, chunkIndex) => {
       const batchNumber = i + chunkIndex + 1;
       
@@ -249,24 +383,23 @@ async function processBatchesInParallel(
         
         if (result.success) {
           results.push(result.result);
-          console.log(`   ✓ Batch ${batchNumber}/${batches.length} complete`);
+          console.log(`   Batch ${batchNumber}/${batches.length} complete`);
         } else {
           errors.push({
             batchNumber: result.batchNumber,
             error: result.error,
             files: result.batch.map(f => f.name)
           });
-          console.error(`   ✗ Batch ${result.batchNumber}/${batches.length} failed: ${result.error.message}`);
+          console.error(`    Batch ${result.batchNumber}/${batches.length} failed: ${result.error.message}`);
           console.error(`      Files: ${result.batch.map(f => f.name).join(', ')}`);
         }
       } else {
-        // This shouldn't happen with Promise.allSettled, but handle just in case
         errors.push({
           batchNumber,
           error: new Error('Unexpected promise rejection'),
           files: chunk[chunkIndex].map(f => f.name)
         });
-        console.error(`   ✗ Batch ${batchNumber}/${batches.length} failed unexpectedly`);
+        console.error(`    Batch ${batchNumber}/${batches.length} failed unexpectedly`);
       }
     });
   }
@@ -275,10 +408,24 @@ async function processBatchesInParallel(
 }
 
 /**
- * Extract project name from pom.xml or use folder name
+ * Extrai o nome do projeto do pom.xml ou usa o nome da pasta
+ * 
+ * Tenta identificar o nome do projeto seguindo esta ordem de prioridade:
+ * 1. Busca o artifactId no arquivo pom.xml (projetos Maven)
+ * 2. Se não encontrar ou houver erro, usa o nome da pasta como fallback
+ * 
+ * Esta abordagem garante que sempre teremos um nome de projeto válido,
+ * mesmo que o pom.xml não exista ou esteja malformado.
+ * 
+ * @async
+ * @param {string} targetDir - Caminho do diretório raiz do projeto
+ * @returns {Promise<string>} Promise que resolve para o nome do projeto
+ * 
+ * @example
+ * const name = await getProjectName('/projetos/meu-ecommerce');
+ * // Retorna: 'ecommerce-automation' (do pom.xml) ou 'meu-ecommerce' (da pasta)
  */
 async function getProjectName(targetDir) {
-  // Try to read pom.xml first
   const pomPath = path.join(targetDir, 'pom.xml');
   try {
     const pomContent = await fs.readFile(pomPath, 'utf-8');
@@ -287,15 +434,39 @@ async function getProjectName(targetDir) {
       return artifactIdMatch[1];
     }
   } catch (error) {
-    // pom.xml not found or couldn't be read, will use folder name
+    // Silently fall back to folder name
   }
 
-  // Fall back to folder name
   return path.basename(targetDir);
 }
 
 /**
- * Analyze a single batch of files using Gemini API
+ * Analisa um único lote de arquivos usando a API do Gemini
+ * 
+ * Esta é a função central que realiza a análise de código propriamente dita.
+ * Ela executa as seguintes operações:
+ * 
+ * 1. Constrói o prompt completo combinando o template com os arquivos do lote
+ * 2. Envia a requisição para a API do Gemini com os parâmetros configurados
+ * 3. Extrai e valida a resposta JSON usando múltiplas estratégias de parsing
+ * 4. Tenta reparar JSON malformado automaticamente se necessário
+ * 5. Coleta metadados de uso de tokens para cálculo de custos
+ * 6. Adiciona informações de tamanho real do lote para agregação posterior
+ * 
+ * Em caso de erro de parsing, salva a resposta bruta em arquivo de debug.
+ * 
+ * @async
+ * @param {Array<{path: string, name: string, content: string}>} fileContents - Arquivos do lote a analisar
+ * @param {string} promptTemplate - Template base do prompt de análise
+ * @param {string} projectName - Nome do projeto
+ * @param {number} batchNumber - Número deste lote (para logging e debug)
+ * @param {number} totalBatches - Total de lotes sendo processados
+ * @param {string} analysisDate - Data da análise no formato YYYY-MM-DD
+ * @returns {Promise<Object>} Objeto contendo grades, problemas, recomendações e metadados de tokens
+ * @throws {Error} Lança erro se a API falhar ou se o JSON não puder ser parseado/reparado
+ * 
+ * @example
+ * const result = await analyzeBatch(files, prompt, 'projeto-x', 1, 3, '2025-01-23');
  */
 async function analyzeBatch(fileContents, promptTemplate, projectName, batchNumber, totalBatches, analysisDate) {
   console.log(`
@@ -317,7 +488,7 @@ Você DEVE retornar sua análise em formato JSON válido seguindo EXATAMENTE est
     "total_files": 0,
     "total_classes": 0,
     "analysis_date": "${analysisDate}",
-    "project_type": "E-commerce Automation"
+    "project_type": "Test Automation"
   },
   "grades": {
     "architecture": {
@@ -421,11 +592,9 @@ Analise todos os arquivos acima seguindo os critérios especificados e retorne o
     const response = await result.response;
     const responseText = response.text();
 
-    console.log('\nReceived response from Gemini API');
+    console.log('Received response from Gemini API');
 
-    // Try to extract JSON from markdown code blocks or raw text
     let jsonText = responseText;
-    // Try multiple extraction patterns in order of preference
     const patterns = [
       // Pattern 1: JSON in markdown code blocks
       /```(?:json)?\s*(\{[\s\S]*?\})\s*```/,
@@ -443,38 +612,32 @@ Analise todos os arquivos acima seguindo os critérios especificados e retorne o
       }
     }
 
-    // Multi-stage JSON parsing with repair fallback
     let analysisResult;
 
     try {
-      // Try parsing original JSON first
       analysisResult = JSON.parse(jsonText);
     } catch (parseError) {
-      console.warn(`   ⚠️  Initial JSON parse failed: ${parseError.message}`);
-      console.warn(`   🔧 Attempting JSON repair...`);
+      console.warn(`   Initial JSON parse failed: ${parseError.message}`);
+      console.warn(`   Attempting JSON repair...`);
       
       try {
-        // Attempt to repair and parse again
         const repairedJson = attemptJsonRepair(jsonText);
         analysisResult = JSON.parse(repairedJson);
-        console.log(`   ✓ JSON successfully repaired and parsed`);
+        console.log(`   JSON successfully repaired and parsed`);
       } catch (repairError) {
-        // Save raw response for debugging
         const debugFile = `debug-batch-${batchNumber}-${Date.now()}.txt`;
         await fs.writeFile(debugFile, responseText, 'utf-8');
-        console.error(`   ✗ JSON repair failed. Raw response saved to: ${debugFile}`);
+        console.error(`    JSON repair failed. Raw response saved to: ${debugFile}`);
         console.error(`   Original error: ${parseError.message}`);
         
         throw new Error(`Failed to parse JSON response: ${parseError.message}. See ${debugFile} for raw response.`);
       }
     }
 
-    // Validate required structure
     if (!analysisResult.project_summary || !analysisResult.grades) {
       throw new Error('Parsed JSON missing required fields (project_summary or grades)');
     }
     
-    // Extract token usage from response metadata
     const usageMetadata = response.usageMetadata || {};
     analysisResult.token_usage = {
       prompt_tokens: usageMetadata.promptTokenCount || 0,
@@ -482,8 +645,6 @@ Analise todos os arquivos acima seguindo os critérios especificados e retorne o
       total_tokens: usageMetadata.totalTokenCount || 0
     };
     
-    // Add actual batch size for accurate weighted averaging in aggregation
-    // This is the REAL number of files analyzed, not Gemini's guessed total_files
     analysisResult._actual_batch_size = fileContents.length;
     
     return analysisResult;
@@ -495,16 +656,38 @@ Analise todos os arquivos acima seguindo os critérios especificados e retorne o
 }
 
 /**
- * Analyze entire codebase in batches
+ * Analisa toda a base de código em lotes paralelos
+ * 
+ * Esta é a função orquestradora principal do processo de análise. Coordena todo o
+ * fluxo de trabalho desde a preparação dos arquivos até a agregação dos resultados finais:
+ * 
+ * 1. Define a data de análise (única para todos os lotes)
+ * 2. Lê o conteúdo de todos os arquivos Java encontrados
+ * 3. Divide os arquivos em lotes respeitando limites de tokens
+ * 4. Processa os lotes em paralelo com controle de concorrência
+ * 5. Coleta estatísticas de uso de tokens de todos os lotes
+ * 6. Trata erros de lotes individuais sem falhar todo o processo
+ * 7. Agrega resultados de todos os lotes bem-sucedidos em um relatório unificado
+ * 8. Calcula o custo estimado total baseado no uso de tokens
+ * 
+ * @async
+ * @param {Array<string>} files - Array com caminhos completos de todos os arquivos Java a analisar
+ * @param {string} promptTemplate - Template de prompt carregado do arquivo MD
+ * @param {string} projectName - Nome do projeto extraído do pom.xml ou pasta
+ * @returns {Promise<Object>} Objeto contendo análise agregada completa com grades, problemas, recomendações, tokens e custos
+ * @throws {Error} Lança erro se TODOS os lotes falharem (processamento parcial é permitido)
+ * 
+ * @example
+ * const analysis = await analyzeCodebaseInBatches(javaFiles, promptTemplate, 'meu-projeto');
+ * // Retorna objeto completo com todas as métricas agregadas
  */
 async function analyzeCodebaseInBatches(files, promptTemplate, projectName) {
   console.log(`
 Preparing to analyze ${files.length} files...`);
   
   // Calculate analysis date once for consistency across all batches
-  const analysisDate = new Date().toISOString().split('T')[0];
+  const analysisDate = new Date().toLocaleDateString('en-CA');
 
-  // Prepare file contents
   const fileContents = [];
   for (const filePath of files) {
     const content = await readFileContent(filePath);
@@ -517,12 +700,11 @@ Preparing to analyze ${files.length} files...`);
     }
   }
 
-  // Create batches
   const batches = createBatches(fileContents, CONFIG.BATCH_SIZE);
   console.log(`Split into ${batches.length} batch(es) for analysis`);
 
-  // Analyze batches in parallel with controlled concurrency
-  console.log(`\nUsing parallel processing (${CONFIG.PARALLEL_BATCHES} batches at a time)...`);
+  console.log(`
+Using parallel processing (${CONFIG.PARALLEL_BATCHES} batches at a time)...`);
 
   const { results: batchResults, errors: batchErrors } = await processBatchesInParallel(
     batches,
@@ -532,7 +714,6 @@ Preparing to analyze ${files.length} files...`);
     CONFIG.PARALLEL_BATCHES
   );
 
-  // Accumulate token usage from all successful batches
   let totalTokens = {
     prompt_tokens: 0,
     completion_tokens: 0,
@@ -547,9 +728,8 @@ Preparing to analyze ${files.length} files...`);
     }
   });
 
-  // Report errors if any occurred
   if (batchErrors.length > 0) {
-    console.error(`\n⚠️  ${batchErrors.length} batch(es) failed after ${CONFIG.RETRY_ATTEMPTS} retries`);
+    console.error(`\n${batchErrors.length} batch(es) failed after ${CONFIG.RETRY_ATTEMPTS} retries`);
     batchErrors.forEach(error => {
       console.error(`   Batch ${error.batchNumber}: ${error.error.message}`);
     });
@@ -559,14 +739,10 @@ Preparing to analyze ${files.length} files...`);
     throw new Error('All batches failed to analyze');
   }
 
-  // Aggregate results from all batches into a single unified report
-  // This combines scores (weighted by actual batch sizes), deduplicates problems,
-  // and merges recommendations across all batches
   console.log('Aggregating results from all batches...');
   const aggregatedResults = aggregateResults(batchResults, fileContents.length, batches.length);
   aggregatedResults.token_usage = totalTokens;
 
-  // Calculate estimated cost
   const costs = calculateCost(totalTokens, CONFIG.MODEL);
   aggregatedResults.estimated_cost = {
     model: costs.model,
@@ -580,15 +756,23 @@ Preparing to analyze ${files.length} files...`);
 }
 
 /**
- * Save analysis results to JSON file
- */
-
-/**
- * Find a valid batch result to use as base structure
+ * Encontra um resultado de lote válido para usar como estrutura base
+ * 
+ * Percorre os resultados dos lotes processados buscando o primeiro que contém
+ * toda a estrutura de dados necessária (project_summary, grades com todas as categorias).
+ * Este lote será usado como template/base para criar o resultado agregado final,
+ * garantindo que todos os campos obrigatórios estejam presentes.
+ * 
+ * @param {Array<Object>} batchResults - Array com resultados de todos os lotes processados
+ * @returns {Object} Primeiro lote com estrutura de dados completa e válida
+ * @throws {Error} Lança erro se nenhum lote tiver estrutura válida (todos incompletos)
+ * 
+ * @example
+ * const baseBatch = getValidBaseBatch(allBatchResults);
+ * // Usa este como template para agregação
  */
 function getValidBaseBatch(batchResults) {
   for (const batch of batchResults) {
-    // Check if batch has required structure
     if (batch &&
         batch.project_summary &&
         batch.grades &&
@@ -605,32 +789,51 @@ function getValidBaseBatch(batchResults) {
 }
 
 /**
- * Aggregate results from multiple batch analyses
+ * Agrega resultados de múltiplas análises de lote em um relatório unificado
+ * 
+ * Combina os resultados de todos os lotes processados em um único relatório consolidado,
+ * executando as seguintes operações de agregação inteligente:
+ * 
+ * 1. **Metadados do Projeto**: Atualiza contagem total de arquivos e classes
+ * 2. **Grades por Categoria**: Calcula médias ponderadas pelo tamanho REAL de cada lote
+ * 3. **Pontos Positivos/Negativos**: Deduplica e mescla pontos de todos os lotes
+ * 4. **Observações**: Concatena observações de todas as análises
+ * 5. **Score Geral**: Recalcula média ponderada final e determina nota (A-F)
+ * 6. **Problemas Comuns**: Deduplica por título, soma ocorrências e mescla arquivos afetados
+ * 7. **Top Issues**: Combina e mantém os 20 problemas mais críticos
+ * 8. **Recomendações**: Deduplica recomendações por descrição
+ * 
+ * A agregação usa o tamanho REAL dos lotes (_actual_batch_size) para garantir
+ * que lotes maiores tenham peso proporcional nas médias calculadas.
+ * 
+ * @param {Array<Object>} batchResults - Array de resultados de análise de cada lote
+ * @param {number} totalFiles - Número total de arquivos analisados em todos os lotes
+ * @param {number} totalBatches - Número total de lotes processados
+ * @returns {Object} Resultado agregado e consolidado de toda a análise
+ * 
+ * @example
+ * const finalReport = aggregateResults(batchResults, 150, 10);
+ * // Retorna relatório unificado de 150 arquivos processados em 10 lotes
  */
 function aggregateResults(batchResults, totalFiles, totalBatches) {
-  // Use the first VALID batch as base structure
   const baseBatch = getValidBaseBatch(batchResults);
   const aggregated = JSON.parse(JSON.stringify(baseBatch));
   
-  // Update project summary
   aggregated.project_summary.total_files = totalFiles;
   aggregated.project_summary.batches_processed = totalBatches;
   
-  // Calculate total classes from all batches
   let totalClasses = 0;
   batchResults.forEach(batch => {
     totalClasses += batch.project_summary?.total_classes || 0;
   });
   aggregated.project_summary.total_classes = totalClasses;
   
-  // Aggregate grades (weighted average by ACTUAL number of files in each batch)
   const categories = ['architecture', 'code_quality', 'validations', 'error_handling'];
   categories.forEach(category => {
     let weightedSum = 0;
     let totalWeight = 0;
     
     batchResults.forEach(batch => {
-      // Use actual batch size, not Gemini's guessed total_files
       const filesInBatch = batch._actual_batch_size || 1;
       const score = batch.grades?.[category]?.score || 0;
       weightedSum += score * filesInBatch;
@@ -640,7 +843,6 @@ function aggregateResults(batchResults, totalFiles, totalBatches) {
     aggregated.grades[category].score = totalWeight > 0 ? 
       Math.round((weightedSum / totalWeight) * 10) / 10 : 0;
     
-    // Combine positive and negative points (deduplicate)
     const allPositive = new Set();
     const allNegative = new Set();
     batchResults.forEach(batch => {
@@ -650,7 +852,6 @@ function aggregateResults(batchResults, totalFiles, totalBatches) {
     aggregated.grades[category].positive_points = Array.from(allPositive);
     aggregated.grades[category].negative_points = Array.from(allNegative);
     
-    // Combine observations
     const observations = batchResults
       .map(b => b.grades?.[category]?.observations)
       .filter(o => o)
@@ -658,7 +859,6 @@ function aggregateResults(batchResults, totalFiles, totalBatches) {
     aggregated.grades[category].observations = observations;
   });
   
-  // Recalculate overall weighted score
   const overallScore = 
     (aggregated.grades.architecture.score * 0.25) +
     (aggregated.grades.code_quality.score * 0.30) +
@@ -667,14 +867,12 @@ function aggregateResults(batchResults, totalFiles, totalBatches) {
   
   aggregated.grades.overall.weighted_score = Math.round(overallScore * 10) / 10;
   
-  // Determine final grade
   if (overallScore >= 9) aggregated.grades.overall.final_grade = 'A';
   else if (overallScore >= 7) aggregated.grades.overall.final_grade = 'B';
   else if (overallScore >= 5) aggregated.grades.overall.final_grade = 'C';
   else if (overallScore >= 3) aggregated.grades.overall.final_grade = 'D';
   else aggregated.grades.overall.final_grade = 'F';
   
-  // Merge common problems (deduplicate by title, sum occurrences)
   const problemsMap = new Map();
   batchResults.forEach(batch => {
     batch.common_problems?.forEach(problem => {
@@ -690,16 +888,14 @@ function aggregateResults(batchResults, totalFiles, totalBatches) {
   aggregated.common_problems = Array.from(problemsMap.values())
     .sort((a, b) => b.occurrences - a.occurrences);
   
-  // Merge top issues (combine and sort by severity)
   const allTopIssues = [];
   batchResults.forEach(batch => {
     if (batch.top_issues) {
       allTopIssues.push(...batch.top_issues);
     }
   });
-  aggregated.top_issues = allTopIssues.slice(0, 20); // Keep top 20
+  aggregated.top_issues = allTopIssues.slice(0, 20);
   
-  // Merge recommendations (deduplicate by description)
   const recommendationsMap = new Map();
   batchResults.forEach(batch => {
     batch.recommendations?.forEach(rec => {
@@ -710,17 +906,32 @@ function aggregateResults(batchResults, totalFiles, totalBatches) {
   });
   aggregated.recommendations = Array.from(recommendationsMap.values());
   
-  // Remove internal implementation field before returning
   delete aggregated._actual_batch_size;
   
   return aggregated;
 }
 
+/**
+ * Salva os resultados da análise em arquivo JSON
+ * 
+ * Serializa o objeto de resultados completo em JSON formatado (com indentação de 2 espaços)
+ * e grava no caminho especificado. O arquivo resultante contém toda a análise agregada
+ * incluindo grades, problemas, recomendações e metadados.
+ * 
+ * @async
+ * @param {Object} results - Objeto completo com todos os resultados da análise
+ * @param {string} outputPath - Caminho completo onde o arquivo JSON será salvo
+ * @returns {Promise<void>}
+ * @throws {Error} Lança erro se não conseguir escrever o arquivo
+ * 
+ * @example
+ * await saveResults(analysisResults, './analysis-results.json');
+ */
 async function saveResults(results, outputPath) {
   try {
     const jsonContent = JSON.stringify(results, null, 2);
     await fs.writeFile(outputPath, jsonContent, 'utf-8');
-    console.log(`\n✓ Analysis results saved to: ${outputPath}`);
+    console.log(`\nAnalysis results saved to: ${outputPath}`);
   } catch (error) {
     console.error('Error saving results:', error.message);
     throw error;
@@ -728,7 +939,24 @@ async function saveResults(results, outputPath) {
 }
 
 /**
- * Display summary of analysis results
+ * Exibe resumo formatado dos resultados da análise no console
+ * 
+ * Apresenta um relatório visual completo e bem formatado contendo:
+ * - Informações do projeto (nome, tipo, arquivos, classes, data)
+ * - Estatísticas de uso de tokens (prompt, completion, total)
+ * - Tempo de execução da análise (formatado em h/m/s)
+ * - Custo estimado detalhado (input, output, total em USD)
+ * - Notas por categoria e média ponderada final
+ * - Top 5 problemas comuns identificados
+ * 
+ * O resumo usa formatação ASCII com linhas divisórias para melhor legibilidade
+ * e apresenta valores numéricos formatados com separadores de milhares.
+ * 
+ * @param {Object} results - Objeto completo de resultados da análise
+ * 
+ * @example
+ * displaySummary(analysisResults);
+ * // Imprime relatório formatado no console
  */
 function displaySummary(results) {
   console.log('\n' + '='.repeat(60));
@@ -755,7 +983,6 @@ Project Name: ${results.project_summary.project_name}`);
     console.log(`Completion Tokens:  ${results.token_usage.completion_tokens.toLocaleString('en-US')}`);
     console.log(`Total Tokens:       ${results.token_usage.total_tokens.toLocaleString('en-US')}`);
     
-    // Display execution time
     if (results.execution_metadata) {
       console.log('');
       console.log('EXECUTION TIME:');
@@ -763,7 +990,6 @@ Project Name: ${results.project_summary.project_name}`);
       console.log(`Total Seconds:      ${results.execution_metadata.duration_seconds}`);
     }
     
-    // Display cost (use saved cost if available)
     const costs = results.estimated_cost || calculateCost(results.token_usage, CONFIG.MODEL);
     console.log('');
     console.log(`ESTIMATED COST (${costs.model}):`);
@@ -798,20 +1024,37 @@ Project Name: ${results.project_summary.project_name}`);
 }
 
 /**
- * Calculate cost based on Gemini API pricing
+ * Calcula o custo estimado baseado nos preços da API do Gemini
+ * 
+ * Realiza cálculo detalhado do custo da análise considerando:
+ * - Modelo utilizado (gemini-2.5-flash ou gemini-2.5-pro)
+ * - Pricing diferenciado por volume (Pro tem tiers para >200k tokens)
+ * - Custos separados para tokens de input (prompt) e output (completion)
+ * - Valores em USD por milhão de tokens
+ * 
+ * Tabela de Preços (por 1M tokens):
+ * - Flash: $0.30 input, $2.50 output
+ * - Pro: $1.25/$2.50 input (</>200k), $10.00/$15.00 output (</>200k)
+ * 
+ * @param {Object} tokenUsage - Objeto contendo contagens de tokens (prompt_tokens, completion_tokens)
+ * @param {string} modelName - Nome do modelo Gemini utilizado
+ * @returns {Object} Objeto contendo custos detalhados (input_cost_usd, output_cost_usd, total_cost_usd, model)
+ * 
+ * @example
+ * const cost = calculateCost({prompt_tokens: 50000, completion_tokens: 5000}, 'gemini-2.5-flash');
+ * // Retorna: {input_cost_usd: 0.015, output_cost_usd: 0.0125, total_cost_usd: 0.0275, model: 'gemini-2.5-flash'}
  */
 function calculateCost(tokenUsage, modelName) {
-  // Gemini API pricing (per 1M tokens in USD) - Updated from official pricing
   const PRICING = {
     'gemini-2.5-flash': {
-      input: 0.30,   // $0.30 per 1M tokens for text/image/video
-      output: 2.50   // $2.50 per 1M tokens (including thinking tokens)
+      input: 0.30,
+      output: 2.50
     },
     'gemini-2.5-pro': {
-      input_under_200k: 1.25,   // $1.25 per 1M tokens (prompts <= 200k)
-      input_over_200k: 2.50,    // $2.50 per 1M tokens (prompts > 200k)
-      output_under_200k: 10.00, // $10.00 per 1M tokens
-      output_over_200k: 15.00   // $15.00 per 1M tokens
+      input_under_200k: 1.25,
+      input_over_200k: 2.50,
+      output_under_200k: 10.00,
+      output_over_200k: 15.00
     }
   };
 
@@ -820,11 +1063,9 @@ function calculateCost(tokenUsage, modelName) {
   let inputRate, outputRate;
   
   if (modelName === 'gemini-2.5-flash') {
-    // Flash has flat pricing
     inputRate = pricing.input;
     outputRate = pricing.output;
   } else {
-    // Pro has tiered pricing based on 200k threshold
     const promptThreshold = 200000;
     inputRate = tokenUsage.prompt_tokens > promptThreshold ? 
       pricing.input_over_200k : pricing.input_under_200k;
@@ -832,7 +1073,6 @@ function calculateCost(tokenUsage, modelName) {
       pricing.output_over_200k : pricing.output_under_200k;
   }
   
-  // Calculate costs (tokens / 1,000,000 * price per 1M)
   const inputCost = (tokenUsage.prompt_tokens / 1000000) * inputRate;
   const outputCost = (tokenUsage.completion_tokens / 1000000) * outputRate;
   const totalCost = inputCost + outputCost;
@@ -846,42 +1086,62 @@ function calculateCost(tokenUsage, modelName) {
 }
 
 /**
- * Main execution function
+ * Função principal de execução do script de análise
+ * 
+ * Orquestra todo o fluxo de trabalho da análise de código do início ao fim:
+ * 
+ * 1. **Validação Inicial**: Verifica variável de ambiente GEMINI_API_KEY
+ * 2. **Preparação**: Valida diretório alvo e extrai nome do projeto
+ * 3. **Carregamento**: Carrega template de prompt de análise
+ * 4. **Descoberta**: Escaneia recursivamente todos os arquivos Java
+ * 5. **Análise**: Processa arquivos em lotes paralelos via Gemini API
+ * 6. **Métricas**: Calcula tempo de execução e formata duração
+ * 7. **Persistência**: Salva resultados JSON no diretório de trabalho
+ * 8. **Apresentação**: Exibe resumo formatado no console
+ * 
+ * O diretório alvo pode ser especificado via argumento de linha de comando
+ * (process.argv[2]) ou usa o diretório atual como padrão.
+ * 
+ * Em caso de erro crítico, exibe mensagem e encerra com código de saída 1.
+ * 
+ * @async
+ * @returns {Promise<void>}
+ * @throws {Error} Erros críticos são capturados, logados e causam process.exit(1)
+ * 
+ * @example
+ * // Uso via linha de comando:
+ * // node analyze-codebase.js /caminho/para/projeto
+ * // ou simplesmente: node analyze-codebase.js (usa diretório atual)
  */
 async function main() {
   const startTime = Date.now();
   
   try {
     console.log('='.repeat(60));
-    console.log('E-COMMERCE CODE ANALYSIS TOOL');
+    console.log('AUTOMATION CODE ANALYSIS TOOL');
     console.log('='.repeat(60));
 
-    // Check API key
     if (!process.env.GEMINI_API_KEY) {
       throw new Error('GEMINI_API_KEY environment variable not set');
     }
 
-    // Get target directory from command line or use current directory
     const targetDir = process.argv[2] || process.cwd();
-    console.log(`\nTarget directory: ${targetDir}`);
+    console.log(`
+Target directory: ${targetDir}`);
 
-    // Verify directory exists
     try {
       await fs.access(targetDir);
     } catch {
       throw new Error(`Directory not found: ${targetDir}`);
     }
 
-    // Get project name
     console.log('Extracting project name...');
     const projectName = await getProjectName(targetDir);
     console.log(`Project name: ${projectName}`);
 
-    // Load analysis prompt template
     console.log('Loading analysis prompt template...');
     const promptTemplate = await loadPromptTemplate();
 
-    // Scan for Java files
     console.log('Scanning for Java files...');
     const files = await scanDirectory(targetDir);
 
@@ -891,21 +1151,17 @@ async function main() {
 
     console.log(`Found ${files.length} Java file(s)`);
 
-    // Analyze codebase in batches
     const results = await analyzeCodebaseInBatches(files, promptTemplate, projectName);
 
-    // Calculate execution time
     const endTime = Date.now();
     const executionTimeMs = endTime - startTime;
     const executionTimeSec = executionTimeMs / 1000;
     const executionTimeMin = executionTimeSec / 60;
 
-    // Format as human-readable
     const hours = Math.floor(executionTimeMin / 60);
     const minutes = Math.floor(executionTimeMin % 60);
     const seconds = Math.floor(executionTimeSec % 60);
 
-    // Add execution metadata to results
     results.execution_metadata = {
       start_time: new Date(startTime).toISOString(),
       end_time: new Date(endTime).toISOString(),
@@ -917,11 +1173,9 @@ async function main() {
           : `${seconds}s`
     };
 
-    // Save results
     const outputPath = path.join(process.cwd(), CONFIG.OUTPUT_FILE);
     await saveResults(results, outputPath);
 
-    // Display summary
     displaySummary(results);
 
     console.log('\nAnalysis complete!');
