@@ -186,9 +186,111 @@ Depois executar:
 source ~/.bashrc  # ou source ~/.zshrc
 ```
 
+## Configuração Azure OpenAI (Alternativa)
+
+Este projeto também suporta Azure OpenAI API como alternativa ao Google Gemini. Use esta opção se você tem acesso ao Azure OpenAI Service.
+
+### Obter Credenciais do Azure OpenAI
+
+1. Acesse o Azure Portal: https://portal.azure.com
+2. Navegue até seu recurso Azure OpenAI
+3. Em "Keys and Endpoint", copie:
+   - **Endpoint**: URL completa do seu endpoint (ex: https://seu-recurso.openai.azure.com)
+   - **API Key**: Uma das chaves disponíveis
+   - **Deployment Name**: Nome do seu deployment do modelo (ex: gpt-4o-mini)
+
+### Configurar Variável de Ambiente
+
+A chave deve ser configurada como variável de ambiente `AZURE_OPENAI_API_KEY`:
+
+#### PowerShell (Windows)
+
+```powershell
+# Sessão atual
+$env:AZURE_OPENAI_API_KEY = "sua-chave-azure-aqui"
+
+# Verificar configuração
+echo $env:AZURE_OPENAI_API_KEY
+```
+
+#### Bash/Zsh (Linux/Mac)
+
+```bash
+# Sessão atual
+export AZURE_OPENAI_API_KEY="sua-chave-azure-aqui"
+
+# Verificar configuração
+echo $AZURE_OPENAI_API_KEY
+```
+
+#### CMD (Windows)
+
+```cmd
+REM Sessão atual
+set AZURE_OPENAI_API_KEY=sua-chave-azure-aqui
+
+REM Verificar configuração
+echo %AZURE_OPENAI_API_KEY%
+```
+
+### Configuração Permanente Azure
+
+#### Windows (Sistema)
+1. Pesquisar "Variáveis de Ambiente" no menu Iniciar
+2. Clicar em "Editar as variáveis de ambiente do sistema"
+3. Botão "Variáveis de Ambiente"
+4. Em "Variáveis do usuário", clicar "Novo"
+5. Nome: `AZURE_OPENAI_API_KEY`
+6. Valor: sua chave API do Azure
+7. OK em todas as janelas
+
+#### Linux/Mac
+Adicionar ao arquivo `~/.bashrc` ou `~/.zshrc`:
+
+```bash
+export AZURE_OPENAI_API_KEY="sua-chave-azure-aqui"
+```
+
+Depois executar:
+```bash
+source ~/.bashrc  # ou source ~/.zshrc
+```
+
+### Ajustar Configurações no Código (Se Necessário)
+
+O arquivo `analyze-codebase-azure.js` vem pré-configurado com:
+- **Endpoint**: `https://rnn-plat-devops-open-ai-prd.openai.azure.com`
+- **Deployment**: `openai-o4mini`
+- **API Version**: `2025-01-01-preview`
+
+Se suas configurações forem diferentes, edite as constantes no início do arquivo:
+
+```javascript
+const CONFIG = {
+  AZURE_ENDPOINT: 'https://SEU-ENDPOINT.openai.azure.com',
+  DEPLOYMENT_NAME: 'seu-deployment-name',
+  API_VERSION: '2025-01-01-preview',
+  // ... outras configurações
+};
+```
+
 ## Como Usar
 
-### Análise Básica
+### Escolher entre Gemini e Azure OpenAI
+
+O projeto oferece duas versões do analisador:
+
+| Característica | Google Gemini | Azure OpenAI |
+|----------------|---------------|--------------|
+| **Arquivo** | `analyze-codebase.js` | `analyze-codebase-azure.js` |
+| **Modelo** | gemini-2.5-flash | GPT-4o-mini |
+| **API Key** | `GEMINI_API_KEY` | `AZURE_OPENAI_API_KEY` |
+| **Custo Estimado** | $0.30 input / $2.50 output (por 1M tokens) | $0.15 input / $0.60 output (por 1M tokens) |
+| **Arquivo de Saída** | `analysis-results.json` | `analysis-results-azure.json` |
+
+**Recomendação**: Azure OpenAI é mais econômico (50% mais barato em input tokens).
+
+### Análise Básica com Gemini
 
 ```bash
 # Analisar diretório atual
@@ -201,22 +303,47 @@ node analyze-codebase.js /caminho/para/projeto
 node analyze-codebase.js C:\projetos\automacao-testes
 ```
 
-### Usando NPM Scripts
+### Análise Básica com Azure OpenAI
 
 ```bash
 # Analisar diretório atual
-npm run analyze
+node analyze-codebase-azure.js
 
 # Analisar diretório específico
+node analyze-codebase-azure.js /caminho/para/projeto
+
+# Exemplo com caminho absoluto Windows
+node analyze-codebase-azure.js C:\projetos\automacao-testes
+
+# Exemplo com caminho absoluto Linux/Mac
+node analyze-codebase-azure.js /home/usuario/projetos/automacao-testes
+```
+
+### Usando NPM Scripts
+
+```bash
+# Google Gemini - Analisar diretório atual
+npm run analyze
+
+# Google Gemini - Analisar diretório específico
 npm run analyze:dir /caminho/para/projeto
+
+# Azure OpenAI - Analisar diretório atual
+npm run analyze:azure
+
+# Azure OpenAI - Analisar diretório específico
+npm run analyze:azure:dir /caminho/para/projeto
 ```
 
 ### Saída
 
 Após a execução:
-- Arquivo `analysis-results.json` é criado no diretório atual
+- **Gemini**: Arquivo `analysis-results.json` é criado no diretório atual
+- **Azure**: Arquivo `analysis-results-azure.json` é criado no diretório atual
 - Resumo completo é exibido no console
-- Arquivos de debug são criados em caso de erro (debug-batch-*.txt)
+- Arquivos de debug são criados em caso de erro:
+  - Gemini: `debug-batch-*.txt`
+  - Azure: `debug-batch-azure-*.txt`
 
 ## Fluxo de Funcionamento
 
@@ -567,9 +694,20 @@ COMMON PROBLEMS IDENTIFIED: 12
 Analysis complete!
 ```
 
-## Custos da API Gemini
+## Custos das APIs
 
-### Tabela de Preços (por 1 milhão de tokens)
+### Comparação de Custos: Gemini vs Azure OpenAI
+
+| API | Modelo | Input (por 1M tokens) | Output (por 1M tokens) | Custo Projeto Médio* |
+|-----|--------|----------------------|------------------------|----------------------|
+| **Google Gemini** | gemini-2.5-flash | $0.30 | $2.50 | ~$0.07 |
+| **Azure OpenAI** | GPT-4o-mini | $0.15 | $0.60 | ~$0.03 |
+
+*Projeto médio: 50-100 arquivos, ~150k input tokens + 10k output tokens
+
+**Economia com Azure OpenAI**: ~57% mais barato que Gemini Flash
+
+### Tabela de Preços Gemini (por 1 milhão de tokens)
 
 #### Gemini 2.5 Flash (Modelo Padrão)
 | Tipo | Preço |
@@ -583,19 +721,46 @@ Analysis complete!
 | ≤ 200k tokens | $1.25 | $10.00 |
 | > 200k tokens | $2.50 | $15.00 |
 
-### Estimativa de Custo
+### Tabela de Preços Azure OpenAI (por 1 milhão de tokens)
+
+#### GPT-4o-mini (Modelo Padrão no Azure)
+| Tipo | Preço |
+|------|-------|
+| Input (prompt) | $0.15 |
+| Output (completion) | $0.60 |
+
+### Estimativa de Custo por Projeto
+
+#### Com Google Gemini (gemini-2.5-flash)
 
 **Projeto Pequeno** (10-20 arquivos):
 - Tokens: ~30k input + 3k output
-- Custo: ~$0.02 USD
+- Custo Gemini: ~$0.02 USD
 
 **Projeto Médio** (50-100 arquivos):
 - Tokens: ~150k input + 10k output
-- Custo: ~$0.07 USD
+- Custo Gemini: ~$0.07 USD
 
 **Projeto Grande** (200+ arquivos):
 - Tokens: ~500k input + 30k output
-- Custo: ~$0.20 USD
+- Custo Gemini: ~$0.20 USD
+
+#### Com Azure OpenAI (GPT-4o-mini)
+
+**Projeto Pequeno** (10-20 arquivos):
+- Tokens: ~30k input + 3k output
+- Custo Azure: ~$0.01 USD
+- **Economia**: 50%
+
+**Projeto Médio** (50-100 arquivos):
+- Tokens: ~150k input + 10k output
+- Custo Azure: ~$0.03 USD
+- **Economia**: 57%
+
+**Projeto Grande** (200+ arquivos):
+- Tokens: ~500k input + 30k output
+- Custo Azure: ~$0.09 USD
+- **Economia**: 55%
 
 **Observação:** Custos são estimativas e variam com:
 - Tamanho dos arquivos
@@ -653,7 +818,7 @@ Após parsing bem-sucedido, valida:
 
 ### Erro: "GEMINI_API_KEY environment variable not set"
 
-**Causa:** Variável de ambiente não configurada
+**Causa:** Variável de ambiente do Gemini não configurada
 
 **Solução:**
 ```bash
@@ -665,6 +830,22 @@ export GEMINI_API_KEY="sua-chave-aqui"
 
 # CMD
 set GEMINI_API_KEY=sua-chave-aqui
+```
+
+### Erro: "AZURE_OPENAI_API_KEY environment variable not set"
+
+**Causa:** Variável de ambiente do Azure não configurada
+
+**Solução:**
+```bash
+# PowerShell
+$env:AZURE_OPENAI_API_KEY = "sua-chave-azure-aqui"
+
+# Bash/Zsh
+export AZURE_OPENAI_API_KEY="sua-chave-azure-aqui"
+
+# CMD
+set AZURE_OPENAI_API_KEY=sua-chave-azure-aqui
 ```
 
 ### Erro: "No Java files found in the specified directory"
@@ -910,15 +1091,19 @@ O arquivo `analysis-results.json` será criado em `C:\Users\usuario\poc-analise-
 
 ```
 poc-analise-codigo/
-├── analyze-codebase.js       # Script principal com toda a lógica
-├── package.json              # Configurações NPM e dependências
-├── package-lock.json         # Lock de versões das dependências
-├── README.md                 # Este arquivo de documentação
+├── analyze-codebase.js           # Versão Google Gemini API
+├── analyze-codebase-azure.js     # Versão Azure OpenAI API (NOVO)
+├── package.json                  # Configurações NPM e dependências
+├── package-lock.json             # Lock de versões das dependências
+├── README.md                     # Este arquivo de documentação
+├── Prompt-Analise-Codigo-Ecommerce.md  # Template de prompt
 │
 └── [Gerados após execução]
-    ├── analysis-results.json # Resultado da análise
-    ├── debug-batch-*.txt     # Arquivos de debug (se houver erros)
-    └── node_modules/         # Dependências instaladas
+    ├── analysis-results.json         # Resultado Gemini
+    ├── analysis-results-azure.json   # Resultado Azure (NOVO)
+    ├── debug-batch-*.txt             # Debug Gemini
+    ├── debug-batch-azure-*.txt       # Debug Azure (NOVO)
+    └── node_modules/                 # Dependências instaladas
 ```
 
 ## Licença
@@ -941,11 +1126,17 @@ Este projeto está sob a licença MIT. Veja o arquivo LICENSE para mais detalhes
 - **Internet:** Banda larga (>10 Mbps)
 
 ### Dependências
-- **@google/generative-ai:** ^0.21.0 (instalado via npm)
-- **Node.js Built-in Modules:**
-  - `fs` (file system)
-  - `path` (path utilities)
+
+**APIs Externas:**
+- **@google/generative-ai:** ^0.21.0 (para versão Gemini)
+- **@azure/openai:** ^2.0.0 (para versão Azure)
+
+**Node.js Built-in Modules:**
+- `fs` (file system)
+- `path` (path utilities)
 
 ---
 
 **Desenvolvido para análise automatizada de qualidade de código Java em projetos de automação de testes.**
+
+**Suporta Google Gemini API e Azure OpenAI API - escolha a melhor opção para suas necessidades!**

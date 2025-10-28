@@ -1,11 +1,13 @@
 {
   "name": "ecommerce-code-analyzer",
   "version": "1.0.0",
-  "description": "Code analysis tool for e-commerce automation projects using Google Gemini API",
+  "description": "Code analysis tool for e-commerce automation projects using Google Gemini API or Azure OpenAI API",
   "main": "analyze-codebase.js",
   "scripts": {
     "analyze": "node analyze-codebase.js",
-    "analyze:dir": "node analyze-codebase.js"
+    "analyze:dir": "node analyze-codebase.js",
+    "analyze:azure": "node analyze-codebase-azure.js",
+    "analyze:azure:dir": "node analyze-codebase-azure.js"
   },
   "keywords": [
     "code-analysis",
@@ -14,12 +16,16 @@
     "testing",
     "gemini",
     "google-ai",
+    "azure-openai",
+    "openai",
     "ai"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@google/generative-ai": "^0.21.0"
+    "@google/generative-ai": "^0.21.0",
+    "mysql2": "^3.15.3",
+    "openai": "^4.77.0"
   },
   "engines": {
     "node": ">=18.0.0"
